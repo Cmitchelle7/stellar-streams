@@ -11,6 +11,7 @@ import {
   formatTokenAmount,
   parseTokenAmount,
   XLM_DECIMALS,
+  vestingCurve,
 } from './index';
 
 describe('formatAddress', () => {
@@ -76,6 +77,26 @@ describe('formatDuration', () => {
     expect(formatDuration(3_661)).toBe('1h 1m');
     expect(formatDuration(90_061)).toBe('1d 1h 1m');
     expect(formatDuration(-5)).toBe('0s');
+  });
+
+  it('keeps exact day output through 7 days', () => {
+    expect(formatDuration(6 * 86_400 + 3_600)).toBe('6d 1h');
+    expect(formatDuration(7 * 86_400)).toBe('7d');
+  });
+
+  it('switches to weeks just past 7 days', () => {
+    expect(formatDuration(8 * 86_400)).toBe('1w 1d');
+    expect(formatDuration(7 * 86_400 + 1)).toBe('1w');
+  });
+
+  it('renders a year for 365 days', () => {
+    expect(formatDuration(365 * 86_400)).toBe('1y');
+  });
+
+  it('renders only the two most significant units for long schedules', () => {
+    expect(formatDuration(400 * 86_400)).toBe('1y 1mo');
+    expect(formatDuration(382 * 86_400)).toBe('1y 2w');
+    expect(formatDuration(8 * 86_400 + 5 * 3_600)).toBe('1w 1d');
   });
 });
 
@@ -163,23 +184,124 @@ describe('parseTokenAmount', () => {
   });
 });
 
-describe("mulDiv", () => {
-  it("returns floor of a*b/c for small values", () => {
+describe('mulDiv', () => {
+  it('returns floor of a*b/c for small values', () => {
     expect(mulDiv(10n, 3n, 4n)).toBe(7n);
   });
 
-  it("throws on division by zero", () => {
-    expect(() => mulDiv(1n, 2n, 0n)).toThrow("mulDiv: division by zero");
+  it('throws on division by zero', () => {
+    expect(() => mulDiv(1n, 2n, 0n)).toThrow('mulDiv: division by zero');
   });
 
-  it("handles values near i128 bounds", () => {
+  it('handles values near i128 bounds', () => {
     const max = 2n ** 127n - 1n;
     expect(mulDiv(max, 1n, 1n)).toBe(max);
     expect(mulDiv(max, 2n, 2n)).toBe(max);
   });
 
-  it("handles remainder division with floor semantics", () => {
+  it('handles remainder division with floor semantics', () => {
     expect(mulDiv(7n, 1n, 2n)).toBe(3n);
     expect(mulDiv(100n, 33n, 7n)).toBe(471n);
+  });
+});
+
+describe('vestingCurve', () => {
+  it('returns { t, vested }[] including both endpoints and the exact cliff point', () => {
+    const stream = {
+      start: 1_000,
+      cliff: 1_400,
+      end: 2_000,
+      deposit: 10_000n,
+    };
+    const curve = vestingCurve(stream, 10);
+
+    expect(curve[0].t).toBe(1_000);
+    expect(curve[0].vested).toBe(0n);
+
+    expect(curve[curve.length - 1].t).toBe(2_000);
+    expect(curve[curve.length - 1].vested).toBe(10_000n);
+
+    const cliffPoint = curve.find((p) => p.t === 1_400);
+    expect(cliffPoint).toBeDefined();
+    expect(cliffPoint!.vested).toBe(4_000n);
+
+    const beforeCliff = curve.filter((p) => p.t < 1_400);
+    expect(beforeCliff.length).toBeGreaterThan(0);
+    for (const p of beforeCliff) {
+      expect(p.vested).toBe(0n);
+    }
+  });
+
+  it('asserts monotonicity and that vested values never exceed the deposit', () => {
+    const stream = {
+      start: 100,
+      cliff: 350,
+      end: 1_000,
+      deposit: 5_000n,
+    };
+    const curve = vestingCurve(stream, 25);
+
+    expect(curve.length).toBeGreaterThanOrEqual(25);
+    for (let i = 0; i < curve.length; i++) {
+      expect(curve[i].vested).toBeLessThanOrEqual(5_000n);
+      expect(curve[i].vested).toBeGreaterThanOrEqual(0n);
+
+      if (i > 0) {
+        expect(curve[i].vested >= curve[i - 1].vested).toBe(true);
+        expect(curve[i].t).toBeGreaterThan(curve[i - 1].t);
+      }
+    }
+  });
+
+  it('is pure and deterministic for a given input', () => {
+    const stream = {
+      start: 0,
+      cliff: 200,
+      end: 800,
+      deposit: 1_000_000n,
+    };
+    const curve1 = vestingCurve(stream, 15);
+    const curve2 = vestingCurve(stream, 15);
+
+    expect(curve1).toEqual(curve2);
+  });
+
+  it('accepts both shorthand and formal VestingSchedule / Stream property names', () => {
+    const shorthand = { start: 100, cliff: 300, end: 500, deposit: 2_000n };
+    const formal = { startTime: 100, cliffTime: 300, endTime: 500, totalAmount: 2_000n };
+
+    const curveShort = vestingCurve(shorthand, 10);
+    const curveFormal = vestingCurve(formal, 10);
+
+    expect(curveShort).toEqual(curveFormal);
+  });
+
+  it('handles string amounts and number deposits', () => {
+    const fromString = vestingCurve({ start: 0, cliff: 100, end: 200, deposit: '5000' }, 5);
+    const fromBigInt = vestingCurve({ start: 0, cliff: 100, end: 200, deposit: 5000n }, 5);
+    const fromNumber = vestingCurve({ start: 0, cliff: 100, end: 200, deposit: 5000 }, 5);
+
+    expect(fromString).toEqual(fromBigInt);
+    expect(fromNumber).toEqual(fromBigInt);
+  });
+
+  it('handles cliff equal to start and cliff equal to end', () => {
+    const cliffAtStart = vestingCurve({ start: 0, cliff: 0, end: 100, deposit: 100n }, 5);
+    expect(cliffAtStart[0].t).toBe(0);
+    expect(cliffAtStart[cliffAtStart.length - 1].t).toBe(100);
+    expect(cliffAtStart[cliffAtStart.length - 1].vested).toBe(100n);
+
+    const cliffAtEnd = vestingCurve({ start: 0, cliff: 100, end: 100, deposit: 100n }, 5);
+    const endPoint = cliffAtEnd.find((p) => p.t === 100);
+    expect(endPoint?.vested).toBe(100n);
+    const midPoint = cliffAtEnd.find((p) => p.t < 100);
+    if (midPoint) {
+      expect(midPoint.vested).toBe(0n);
+    }
+  });
+
+  it('handles edge case where start equals end', () => {
+    const single = vestingCurve({ start: 500, cliff: 500, end: 500, deposit: 1_000n });
+    expect(single).toEqual([{ t: 500, vested: 1_000n }]);
   });
 });
