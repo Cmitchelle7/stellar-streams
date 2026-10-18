@@ -262,10 +262,13 @@ impl StreamContract {
         let mut stream: Stream =
             env.storage().persistent().get(&key).ok_or(StreamError::StreamNotFound)?;
 
+        if stream.cancelled {
+            return Err(StreamError::StreamCancelled);
+        }
         if stream.paused_at.is_some() {
             return Err(StreamError::StreamPaused);
         }
-        $2
+        stream.recipient.require_auth();
 
         let now = env.ledger().timestamp();
         let vested = vested_amount(&stream, now);
