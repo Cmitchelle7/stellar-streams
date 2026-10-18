@@ -119,6 +119,21 @@ pub struct StreamCancelled {
     pub refunded: i128,
 }
 
+#[contractevent]
+pub struct StreamPaused {
+    #[topic]
+    pub id: u64,
+    pub paused_at: u64,
+}
+
+#[contractevent]
+pub struct StreamResumed {
+    #[topic]
+    pub id: u64,
+    pub resumed_at: u64,
+    pub total_paused: u64,
+}
+
 #[contract]
 pub struct StreamContract;
 
@@ -247,7 +262,10 @@ impl StreamContract {
         let mut stream: Stream =
             env.storage().persistent().get(&key).ok_or(StreamError::StreamNotFound)?;
 
-        stream.recipient.require_auth();
+        if stream.paused_at.is_some() {
+            return Err(StreamError::StreamPaused);
+        }
+        $2
 
         let now = env.ledger().timestamp();
         let vested = vested_amount(&stream, now);
