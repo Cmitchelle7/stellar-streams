@@ -3,6 +3,7 @@ import {
   formatAddress,
   formatStroopsToXlm,
   parseXlmToStroops,
+  mulDiv,
   formatDuration,
   computeVestedAmount,
   computeProgressBps,
@@ -159,5 +160,26 @@ describe('parseTokenAmount', () => {
   it('rejects invalid input', () => {
     expect(() => parseTokenAmount('abc', 6)).toThrow('Invalid token amount');
     expect(() => parseTokenAmount('1', -1)).toThrow('Invalid token decimals');
+  });
+});
+
+describe("mulDiv", () => {
+  it("returns floor of a*b/c for small values", () => {
+    expect(mulDiv(10n, 3n, 4n)).toBe(7n);
+  });
+
+  it("throws on division by zero", () => {
+    expect(() => mulDiv(1n, 2n, 0n)).toThrow("mulDiv: division by zero");
+  });
+
+  it("handles values near i128 bounds", () => {
+    const max = 2n ** 127n - 1n;
+    expect(mulDiv(max, 1n, 1n)).toBe(max);
+    expect(mulDiv(max, 2n, 2n)).toBe(max);
+  });
+
+  it("handles remainder division with floor semantics", () => {
+    expect(mulDiv(7n, 1n, 2n)).toBe(3n);
+    expect(mulDiv(100n, 33n, 7n)).toBe(471n);
   });
 });

@@ -140,3 +140,16 @@ export function formatBps(bps: number): string {
   const clamped = Math.max(0, Math.min(10_000, bps));
   return `${(clamped / 100).toFixed(clamped % 100 === 0 ? 0 : 1)}%`;
 }
+
+
+/**
+ * Returns floor(a * b / c) for bigint inputs.
+ *
+ * Matches the contract's integer math: multiplication happens in bigint (no
+ * i128 overflow risk at the call site), then floor division. Throws if c === 0n.
+ */
+export function mulDiv(a: bigint, b: bigint, c: bigint): bigint {
+  if (c === 0n) throw new Error("mulDiv: division by zero");
+  return (a * b) / c;
+}
+
